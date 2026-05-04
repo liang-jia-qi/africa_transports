@@ -1,0 +1,44 @@
+# ============================================================
+# Africa_Transports — Git 忽略规则
+# ============================================================
+
+# --- 排除的大型 input 文件夹 ---
+input/Africapolis_GIS_2024/
+input/Density_Scenarios_Paper/
+
+# --- 排除的大型 input 文件 ---
+input/global_pop_2025_CN_1km_R2025A_UA_v1.tif
+input/World-Base-Map-Shapefiles.zip
+
+# --- 系统文件 ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# --- R ---
+.Rhistory
+.RData
+.Rproj.user/
+
+# --- 临时 / 编辑器 ---
+*.tmp
+*.bak
+*.swp
+*~
+.idea/
+.vscode/
+
+# --- 其他大型 GIS 文件（如需要可注释掉）---
+# *.tif
+# *.tiff
