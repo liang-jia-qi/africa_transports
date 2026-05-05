@@ -28,8 +28,8 @@ import matplotlib.patches as mpatches
 matplotlib.use("Agg")
 
 # ── paths ──────────────────────────────────────────────────────────────────────
-INPUT_DIR  = "../input"
-OUTPUT_DIR = "../output"
+INPUT_DIR  = "input"
+OUTPUT_DIR = "output"
 FIG_DIR    = os.path.join(OUTPUT_DIR, "Figures")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(FIG_DIR,    exist_ok=True)
@@ -47,12 +47,12 @@ NSTEPS           = 25_000  # alias kept for clarity
 # add further columns once GIS intersection is done (see urban_penalty.py).
 # For now we run baseline + the two pre-computed urban columns.
 TIME_SCENARIOS = {
-    "baseline":      "time",
-    "urban_2015":    "timeU",
-    "urban_CB_2015": "timeUCB",
-    "urban_high_2050":   "timeU_high2050",
-    "urban_cons_2050":   "timeU_cons2050",
-    "urban_low_2050":    "timeU_lowd2050",
+    "baseline":        "time",
+    "urban_2015":      "timeU",
+    "urban_CB_2015":   "timeUCB",
+    "urban_high_2050": "timeU_high2050",
+    "urban_cons_2050": "timeU_cons2050",
+    "urban_low_2050":  "timeU_lowd2050",   # 列名是lowd（来自urban_penalty.py输出）
 }
 
 
@@ -64,7 +64,10 @@ def load_data(input_dir: str = INPUT_DIR):
     """Load and merge nodes, edges, and Africapolis 2050 population data."""
 
     nodes = pd.read_csv(os.path.join(input_dir, "AfricaNetworkNodes.csv"))
-    edges = pd.read_csv(os.path.join(input_dir, "AfricaNetworkEdges_withUrban.csv"))
+    # 优先读包含urban penalty时间列的版本，回退到原始版本
+    edges_with_urban = os.path.join(input_dir, "AfricaNetworkEdges_withUrban.csv")
+    edges_original   = os.path.join(input_dir, "AfricaNetworkEdges.csv")
+    edges = pd.read_csv(edges_with_urban if os.path.exists(edges_with_urban) else edges_original)
     afp   = pd.read_csv(os.path.join(input_dir, "Africapolis_2050.csv"),
                         usecols=["Agglomeration_ID", "Population_2050"])
 
@@ -419,10 +422,16 @@ def run_scenario(scenario_label: str,
                  time_col: str,
                  nodes: pd.DataFrame,
                  edges: pd.DataFrame,
-                 force_recompute: bool = False):
+                 force_recompute: bool = False,
+                 GM_fixed: object = None):
     """
     Full pipeline for one time-weight scenario.
     Results are cached in output/ as pickle files.
+
+    GM_fixed: if provided, skip gravity computation and use this pre-computed
+              gravity pairs DataFrame instead. This ensures all scenarios share
+              the same demand matrix (only routing changes, not demand).
+              Pass the baseline GravityPairs for density scenarios.
     """
     print(f"\n{'='*60}")
     print(f"SCENARIO: {scenario_label}  (time col = '{time_col}')")
@@ -435,7 +444,14 @@ def run_scenario(scenario_label: str,
     G = build_graph(nodes, edges)
 
     # ── Gravity pairs ────────────────────────────────────────────────────────
-    if not force_recompute and os.path.exists(grav_path):
+    if GM_fixed is not None:
+        # Use pre-computed gravity from baseline: demand is population-driven,
+        # not affected by city boundary scenario
+        GM = GM_fixed
+        print("  Using fixed baseline gravity pairs (demand independent of routing)")
+        # Save a copy so the cache reflects what was used
+        pickle.dump(GM, open(grav_path, "wb"))
+    elif not force_recompute and os.path.exists(grav_path):
         print("  Loading cached gravity pairs …")
         GM = pickle.load(open(grav_path, "rb"))
     else:
@@ -515,12 +531,29 @@ if __name__ == "__main__":
     else:
         scenarios = TIME_SCENARIOS
 
+    # Density scenarios share the baseline gravity matrix (demand is
+    # population-driven, independent of city boundary scenario).
+    DENSITY_SCENARIOS = {"urban_high_2050", "urban_cons_2050", "urban_low_2050"}
+    BASELINE_GRAV_PATH = os.path.join(OUTPUT_DIR, "GravityPairs_baseline.pkl")
+
+    GM_baseline = None
+    if any(s in DENSITY_SCENARIOS for s in scenarios):
+        if os.path.exists(BASELINE_GRAV_PATH):
+            print("  Loading baseline gravity pairs for density scenarios …")
+            GM_baseline = pickle.load(open(BASELINE_GRAV_PATH, "rb"))
+        else:
+            print("  ⚠ Baseline gravity pairs not found.")
+            print("    Run baseline scenario first: python africa_transport.py baseline")
+
     results = {}
     for label, col in scenarios.items():
         if col not in edges.columns:
             print(f"  ⚠ Column '{col}' not in edges – skipping scenario '{label}'")
             continue
-        G, GM = run_scenario(label, col, nodes, edges, force_recompute=force)
+        # Pass fixed baseline GM for density scenarios
+        gm_fixed = GM_baseline if label in DENSITY_SCENARIOS else None
+        G, GM = run_scenario(label, col, nodes, edges,
+                             force_recompute=force, GM_fixed=gm_fixed)
         results[label] = (G, GM)
 
     print("\nAll done. Outputs in:", OUTPUT_DIR)
