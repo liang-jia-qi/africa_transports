@@ -42,10 +42,10 @@ from rasterio.merge import merge as rio_merge
 warnings.filterwarnings("ignore")
 
 # ── defaults ────────────────────────────────────────────────────────────────
-TIF_DIR      = "../input/Density_Scenarios_Paper"
-INPUT_EDGES  = "../input/AfricaNetworkEdges.csv"
-INPUT_NODES  = "../input/AfricaNetworkNodes.csv"
-OUTPUT_EDGES = "../input/AfricaNetworkEdges_withUrban.csv"
+TIF_DIR      = "input/Density_Scenarios_Paper"
+INPUT_EDGES  = "input/AfricaNetworkEdges.csv"
+INPUT_NODES  = "input/AfricaNetworkNodes.csv"
+OUTPUT_EDGES = "input/AfricaNetworkEdges_withUrban.csv"
 
 V_URBAN      = 30.0   # km/h inside urban pixels
 V_INTERCITY  = 60.0   # km/h outside urban pixels
@@ -93,8 +93,6 @@ def build_tif_index(tif_dir: str) -> pd.DataFrame:
             })
 
     df = pd.DataFrame(records)
-    print("actual columns",df.columns.tolist())
-
     print(f"TIF index: {len(df)} files  |  "
           f"scenarios: {df['scenario'].unique().tolist()}  |  "
           f"years: {sorted(df['year'].unique().tolist())}")
@@ -177,11 +175,10 @@ def sample_edges_vectorised(
 
     # Collect ALL sample points across all edges first, then batch-query raster
     all_lons, all_lats, edge_ids, n_samples_per_edge = [], [], [], []
-    print("edges columns:", edges.columns.tolist())    
-
+    
     for i, row in edges.iterrows():
         try:
-            x0, y0 = node_xy.loc[row['from'], ["x", "y"]]
+            x0, y0 = node_xy.loc[row['from'], ["x", "y"]]  # 用方括号
             x1, y1 = node_xy.loc[row['to'], ["x", "y"]]
             edge_len_km = row['l']
         except KeyError:
@@ -233,18 +230,33 @@ def sample_edges_vectorised(
 def urban_fraction_to_time(
     edges: pd.DataFrame,
     urban_fracs: np.ndarray,
-    v_urban:      float = V_URBAN,
-    v_intercity:  float = V_INTERCITY,
+    v_urban: float = V_URBAN,
+    v_intercity: float = V_INTERCITY,   # 保留参数签名但不再使用
 ) -> np.ndarray:
     """
-    time_new (minutes) = l_urban/v_urban*60 + l_rural/v_intercity*60
+    修正版：城外部分保留coauthor原始速度，只有城内部分降速到v_urban。
 
-    l in km, v in km/h → time in minutes
+    原始 time 列已经按道路类型分级（motorway=100, trunk=60, primary=40 km/h），
+    不能用固定的 v_intercity 覆盖城外部分，否则primary边会被"提速"导致时间变短。
+
+    公式：
+      time_new = time_rural_orig + time_urban_new
+               = time * (1 - urban_frac)        # 城外：保持原始时间
+               + l * urban_frac / v_urban * 60  # 城内：统一降到v_urban
+
+    保证：urban_frac > 0 且 implied_speed > v_urban 时，time_new > time_original
     """
-    l = edges["l"].values                  # km
-    l_urban = l * urban_fracs
-    l_rural = l - l_urban
-    time_new = (l_urban / v_urban + l_rural / v_intercity) * 60.0
+    l            = edges["l"].values      # km
+    time_orig    = edges["time"].values   # 分钟，含道路类型分级速度
+
+    time_rural   = time_orig * (1 - urban_fracs)          # 城外：原速不变
+    time_urban   = l * urban_fracs / v_urban * 60.0       # 城内：降到v_urban
+
+    time_new = time_rural + time_urban
+
+    # 安全检查：确保不会比原始时间更短
+    time_new = np.maximum(time_new, time_orig)
+
     return time_new
 
 
